@@ -108,7 +108,7 @@
     const hostId = urlParams.get('room');
     const isClient = !!hostId;
 
-    let peer, yearChart, subjectChart;
+    let peer, conn, yearChart, subjectChart;
     const stats = { years: {}, subjects: {}, total: 0 };
 
     const presenterSection = document.getElementById('presenterSection');
@@ -174,6 +174,21 @@
       subjectChart.update();
     }
 
+    function recordSubmission(data) {
+      if (data.years === '' || !Array.isArray(data.subjects) || data.subjects.length === 0) return;
+      stats.years[data.years] = (stats.years[data.years] || 0) + 1;
+      data.subjects.forEach(sub => {
+        if (sub) stats.subjects[sub] = (stats.subjects[sub] || 0) + 1;
+      });
+      stats.total += 1;
+      updateDashboard();
+    }
+
+    function showSuccess() {
+      document.getElementById('pollForm').classList.add('hidden');
+      document.getElementById('successCard').classList.remove('hidden');
+    }
+
     function resetStats() {
       const enteredPin = window.prompt('請輸入主持人密碼：');
       if (enteredPin === null) return;
@@ -188,8 +203,30 @@
       stats.subjects = {};
       stats.total = 0;
       updateDashboard();
+      document.getElementById('pollForm').reset();
+      document.getElementById('pollForm').classList.remove('hidden');
+      document.getElementById('successCard').classList.add('hidden');
       window.alert('所有紀錄已清除，可以開始新一輪填答。');
     }
+
+    document.getElementById('pollForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const years = document.getElementById('inputYears').value;
+      const subjects = Array.from(document.querySelectorAll('.subject-input'))
+        .map(input => input.value.trim())
+        .filter(val => val.length > 0);
+      const data = { years, subjects };
+
+      if (!isClient) {
+        recordSubmission(data);
+        showSuccess();
+      } else if (conn && conn.open) {
+        conn.send(data);
+        showSuccess();
+      } else {
+        window.alert('仍在連線主機，請稍候幾秒後再試一次。');
+      }
+    });
 
     if (!isClient) {
       initCharts();
@@ -209,16 +246,7 @@
 
       peer.on('connection', (conn) => {
         conn.on('data', (data) => {
-          if (data.years && Array.isArray(data.subjects)) {
-            stats.years[data.years] = (stats.years[data.years] || 0) + 1;
-            data.subjects.forEach(sub => {
-              if (sub) {
-                stats.subjects[sub] = (stats.subjects[sub] || 0) + 1;
-              }
-            });
-            stats.total += 1;
-            updateDashboard();
-          }
+          recordSubmission(data);
         });
       });
 
@@ -234,27 +262,16 @@
       toggleRoleBtn.classList.add('hidden');
 
       peer = new Peer();
-      let conn;
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.innerText = '連線中…';
 
       peer.on('open', () => {
         conn = peer.connect(hostId);
-      });
-
-      document.getElementById('pollForm').addEventListener('submit', (e) => {
-        e.preventDefault();
-        const years = document.getElementById('inputYears').value;
-        const inputElements = document.querySelectorAll('.subject-input');
-        const subjects = Array.from(inputElements)
-          .map(input => input.value.trim())
-          .filter(val => val.length > 0);
-
-        if (conn && conn.open) {
-          conn.send({ years: years, subjects: subjects });
-          document.getElementById('pollForm').classList.add('hidden');
-          document.getElementById('successCard').classList.remove('hidden');
-        } else {
-          alert('連線主機中，請稍候 2 秒後再試一次');
-        }
+        conn.on('open', () => {
+          submitBtn.disabled = false;
+          submitBtn.innerText = '送出資料';
+        });
       });
     }
   </script>
