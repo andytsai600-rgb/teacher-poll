@@ -66,6 +66,7 @@
       <div class="text-center mb-6">
         <h2 class="text-xl font-bold text-slate-900">填寫您的教學資訊</h2>
         <p class="text-xs text-slate-500 mt-1">若任教多個科目，可依序新增填入</p>
+        <p id="connectionStatus" class="text-xs text-amber-600 mt-2">正在連線至大螢幕…</p>
       </div>
 
       <form id="pollForm" class="space-y-5">
@@ -91,7 +92,7 @@
 
         <button type="submit" id="submitBtn" 
           class="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold rounded-xl transition shadow-sm mt-4">
-          送出資料
+          送出
         </button>
       </form>
 
@@ -109,6 +110,9 @@
     const isClient = !!hostId;
 
     let peer, conn, yearChart, subjectChart;
+    let isConnecting = false;
+    let pendingSubmission = null;
+    let reconnectTimer = null;
     const stats = { years: {}, subjects: {}, total: 0 };
 
     const presenterSection = document.getElementById('presenterSection');
@@ -117,6 +121,8 @@
     const subjectInputsContainer = document.getElementById('subjectInputsContainer');
     const addSubjectBtn = document.getElementById('addSubjectBtn');
     const resetStatsBtn = document.getElementById('resetStatsBtn');
+    const submitBtn = document.getElementById('submitBtn');
+    const connectionStatus = document.getElementById('connectionStatus');
     const RESET_PIN = '0000';
 
     let subjectCount = 1;
@@ -189,6 +195,47 @@
       document.getElementById('successCard').classList.remove('hidden');
     }
 
+    function setConnectionStatus(message, connected = false) {
+      connectionStatus.innerText = message;
+      connectionStatus.className = connected ? 'text-xs text-green-600 mt-2' : 'text-xs text-amber-600 mt-2';
+    }
+
+    function scheduleReconnect() {
+      if (!isClient || reconnectTimer) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connectToHost();
+      }, 1500);
+    }
+
+    function connectToHost() {
+      if (!isClient || !peer || peer.destroyed || isConnecting || (conn && conn.open)) return;
+      isConnecting = true;
+      setConnectionStatus('正在連線至大螢幕…');
+      conn = peer.connect(hostId, { reliable: true });
+      conn.on('open', () => {
+        isConnecting = false;
+        setConnectionStatus('已連線，可以送出', true);
+        submitBtn.disabled = false;
+        submitBtn.innerText = '送出';
+        if (pendingSubmission) {
+          conn.send(pendingSubmission);
+          pendingSubmission = null;
+          showSuccess();
+        }
+      });
+      conn.on('close', () => {
+        isConnecting = false;
+        setConnectionStatus('連線中斷，正在重新連線…');
+        scheduleReconnect();
+      });
+      conn.on('error', () => {
+        isConnecting = false;
+        setConnectionStatus('連線失敗，正在重新嘗試…');
+        scheduleReconnect();
+      });
+    }
+
     function resetStats() {
       const enteredPin = window.prompt('請輸入主持人密碼：');
       if (enteredPin === null) return;
@@ -224,7 +271,11 @@
         conn.send(data);
         showSuccess();
       } else {
-        window.alert('仍在連線主機，請稍候幾秒後再試一次。');
+        pendingSubmission = data;
+        submitBtn.disabled = true;
+        submitBtn.innerText = '送出中…';
+        setConnectionStatus('正在重新連線，連上後會自動送出…');
+        connectToHost();
       }
     });
 
@@ -254,6 +305,7 @@
         presenterSection.classList.toggle('hidden');
         participantSection.classList.toggle('hidden');
         toggleRoleBtn.innerText = presenterSection.classList.contains('hidden') ? '切換至大螢幕展示' : '切換至手機填答模式';
+        if (presenterSection.classList.contains('hidden')) setConnectionStatus('主機測試模式，可以直接送出', true);
       });
 
     } else {
@@ -262,16 +314,14 @@
       toggleRoleBtn.classList.add('hidden');
 
       peer = new Peer();
-      const submitBtn = document.getElementById('submitBtn');
-      submitBtn.disabled = true;
-      submitBtn.innerText = '連線中…';
 
       peer.on('open', () => {
-        conn = peer.connect(hostId);
-        conn.on('open', () => {
-          submitBtn.disabled = false;
-          submitBtn.innerText = '送出資料';
-        });
+        connectToHost();
+      });
+      peer.on('error', () => {
+        isConnecting = false;
+        setConnectionStatus('連線失敗，正在重新嘗試…');
+        scheduleReconnect();
       });
     }
   </script>
